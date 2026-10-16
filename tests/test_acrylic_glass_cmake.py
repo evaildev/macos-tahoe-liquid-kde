@@ -1,5 +1,6 @@
 """Static guards for the Acrylic Glass CMake fallback paths."""
 
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -180,3 +181,30 @@ def test_corner_defaults_warn_on_failed_write(monkeypatch, capsys):
     monkeypatch.setattr(acrylic_glass, "kw_write", lambda *args: False)
     acrylic_glass._install_corner_defaults()
     assert "kwriteconfig6" in capsys.readouterr().out
+
+
+def test_acrylic_glass_gates_kwin_68_draw_window_api():
+    """KWin 6.8 (6.7.90 beta onwards) made Effect::drawWindow() return
+    bool and dropped snapToPixelGrid/snapToPixelGridF. The effect must
+    switch its override signature on GLASS_KWIN_68 and keep its own pixel
+    snapping helpers so it builds on 6.6, 6.7 and 6.8."""
+    top = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert "VERSION_GREATER_EQUAL 6.7.90" in top
+    src = (ROOT / "src/CMakeLists.txt").read_text(encoding="utf-8")
+    assert "target_compile_definitions(liquidglass PRIVATE GLASS_KWIN_68)" in src
+    assert "target_compile_definitions(liquidglass_x11 PRIVATE GLASS_KWIN_68)" in src
+
+    compat = (ROOT / "src/kwin_version_compat.h").read_text(encoding="utf-8")
+    assert "#ifdef GLASS_KWIN_68" in compat
+    assert "using AcrylicGlassDrawWindowResult = bool;" in compat
+    assert "using AcrylicGlassDrawWindowResult = void;" in compat
+
+    header = (ROOT / "src/effect.h").read_text(encoding="utf-8")
+    assert "AcrylicGlassDrawWindowResult drawWindow(" in header
+
+    effect = (ROOT / "src/effect.cpp").read_text(encoding="utf-8")
+    assert "AcrylicGlassDrawWindowResult BlurEffect::drawWindow(" in effect
+    # KWin's helpers are gone on 6.8; only the local copies may be called.
+    assert re.search(r"(?<![A-Za-z_])snapToPixelGridF?\(", effect) is None
+    assert "inline QRect agSnapToPixelGrid(" in effect
+    assert "inline QRectF agSnapToPixelGridF(" in effect
